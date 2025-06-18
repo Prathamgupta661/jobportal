@@ -32,19 +32,17 @@ app.use("/api/v1/company", companyRoute);
 app.use("/api/v1/job", jobRoute);
 app.use("/api/v1/application", applicationRoute);
 
-// const url='';
-// const timer=30000;
-// const fetchwebsite=()=>{
-//     fetch(url)
-//     .then(res=>res.text())
-//     .then(data=>{
-//         console.log("Website is up and running");
-//     })
-//     .catch(err=>{
-//         console.log("Website is down");
-//     })
-// }
-// setInterval(fetchwebsite, timer);
+const url='https://jobportal-e7b6.onrender.com';
+const timer=30000;
+const fetchwebsite=()=>{
+    fetch(url)
+    .then(res=>res.text())
+    .then(data=>{
+    })
+    .catch(err=>{
+    })
+}
+setInterval(fetchwebsite, timer);
 
 
 
