@@ -1,0 +1,171 @@
+# Chapter 1: Backend Authentication Middleware
+
+Welcome to the first chapter of our job portal project tutorial! In this chapter, we'll tackle a fundamental concept in building secure web applications: **Backend Authentication Middleware**. Don't worry if these terms sound complicated; we'll break them down step-by-step using simple language and analogies.
+
+### The Problem: Protecting Your Backend
+
+Imagine our job portal application. We have users who can log in, post jobs (if they are employers), apply for jobs (if they are job seekers), and manage their profiles. Some actions, like posting a job or applying, should *only* be allowed for users who are logged in. If someone who isn't logged in tries to post a job, we need a way to stop them and protect our application's data and functionality.
+
+This is where the concept of protecting specific "routes" or "endpoints" on our backend comes in. A route is like a specific address (URL) on our server that performs a particular task (e.g., `/api/jobs/post` might be the address for posting a new job). We need a gatekeeper for these addresses.
+
+### The Solution: The Authentication Middleware
+
+Think of our backend like a building with different rooms. Some rooms (like the homepage) are open to everyone. But other rooms (like the "Post a Job" room or the "My Applications" room) require a special pass or ID to enter.
+
+The **Authentication Middleware** is like the security guard standing at the door of these special rooms. When someone tries to enter, the security guard (the middleware) first checks if they have a valid pass (are they authenticated/logged in?).
+
+*   **If they have a valid pass:** The security guard says, "Welcome! Go right in." (The middleware allows the request to proceed to the code that actually handles posting the job or viewing applications).
+*   **If they *don't* have a valid pass:** The security guard says, "Sorry, you can't enter." (The middleware stops the request right there and sends an error message back to the user).
+
+This "middleware" is essentially a function that runs *before* the main function that handles the request (like the function that saves a new job to the database). It acts as a checkpoint.
+
+### How is Authentication Middleware Used?
+
+In our project, the `isAuthenticated` function acts as this security guard. Let's look at how we use it in our backend routes.
+
+Here's a small snippet from the `backend/routes/job.route.js` file:
+
+```javascript
+// backend/routes/job.route.js (simplified)
+import express from "express";
+import isAuthenticated from "../middlewares/isAuthenticated.js"; // Import the guard
+import { postJob, getAllJobs } from "../controllers/job.controller.js"; // Import task handlers
+
+const router = express.Router();
+
+// This route requires the guard!
+router.route("/post").post(isAuthenticated, postJob);
+
+// This route doesn't require the guard (public)
+router.route("/get").get(getAllJobs);
+
+export default router;
+```
+
+**Explanation:**
+
+1.  `import isAuthenticated from "../middlewares/isAuthenticated.js";`: We first bring our security guard function into this file.
+2.  `import { postJob, getAllJobs } from "../controllers/job.controller.js";`: We also import the functions that actually *do* the work (posting a job, getting all jobs). These are called "controllers" and we'll learn more about them in [Backend Controllers](03_backend_controllers_.md).
+3.  `router.route("/post").post(isAuthenticated, postJob);`: This is the key line!
+    *   `router.route("/post")`: Defines the path `/post`.
+    *   `.post(...)`: Specifies that this route handles POST requests (used for sending data, like creating a new job).
+    *   `(isAuthenticated, postJob)`: Here, we provide *two* functions in sequence. `isAuthenticated` is the first one. Express (our backend framework) will run `isAuthenticated` *first*.
+        *   If `isAuthenticated` passes its check, it will call `next()` internally, and Express will then call the `postJob` function.
+        *   If `isAuthenticated` fails its check, it will send an error response (`res.status(401).json(...)`) and will *not* call `next()`, meaning `postJob` is never executed.
+
+4.  `router.route("/get").get(getAllJobs);`: This route handles GET requests to `/get`. Notice it *only* has `getAllJobs`. This means anyone can view all job listings without being logged in.
+
+You can see this pattern repeated across various route files (`application.route.js`, `company.route.js`, `user.route.js`) for actions that require a logged-in user.
+
+### How Does the Middleware Work Inside?
+
+Okay, let's peek behind the curtain and see what our `isAuthenticated` security guard actually does.
+
+The "pass" it checks for is usually a **JSON Web Token (JWT)**. When a user successfully logs in, the backend creates a unique JWT for them, signs it with a secret key (so it can't be easily faked), and sends it back to the user's browser, often stored in a cookie. For every subsequent request to a protected route, the browser automatically sends this cookie (containing the JWT) back to the server.
+
+Here's the simplified flow:
+
+```mermaid
+sequenceDiagram
+    participant User as User's Browser
+    participant Server as Backend Server
+    participant Middleware as isAuthenticated Middleware
+    participant JWT_Lib as JWT Library
+
+    User->>Server: Request to protected route (e.g., POST /api/jobs/post) with cookie (containing token)
+    Server->>Middleware: Hand the request to isAuthenticated function
+    Middleware->>Middleware: Check if token exists in cookie (req.cookies.token)
+    alt No token found
+        Middleware-->>User: Send 401 Unauthorized error response
+        Note over Middleware: Stop processing request
+    else Token found
+        Middleware->>JWT_Lib: Verify the token using secret key
+        alt Token invalid/expired
+            JWT_Lib-->>Middleware: Verification failed
+            Middleware-->>User: Send 401 Invalid Token error response
+            Note over Middleware: Stop processing request
+        else Token valid
+            JWT_Lib-->>Middleware: Verification successful. Provide user info (like user ID)
+            Middleware->>Middleware: Attach user ID to the request (req.id = userId)
+            Middleware-->>Server: Call next() - pass request to next handler
+            Server->>Server: Hand request to the controller function (e.g., postJob)
+            Server-->>User: Send response from controller
+        end
+    end
+```
+
+Now let's look at the code for `backend/middlewares/isAuthenticated.js`:
+
+```javascript
+// backend/middlewares/isAuthenticated.js (simplified)
+import jwt from "jsonwebtoken"; // Tool to work with JWTs
+
+const isAuthenticated = async (req, res, next) => {
+    try {
+        // 1. Get the token from the browser's cookies
+        const token = req.cookies.token; // 'req' has details about incoming request
+
+        // 2. Check if the token exists
+        if (!token) {
+            // If no token, send error 401 (Unauthorized)
+            return res.status(401).json({
+                message: "User not authenticated",
+                success: false,
+            });
+        }
+
+        // 3. Verify the token using our secret key
+        // 'jwt.verify' checks if the token is valid and hasn't been tampered with
+        const decode = await jwt.verify(token, process.env.SECRET_KEY); // Uses secret from server settings
+
+        // 4. Check if verification was successful
+        if (!decode) {
+             // If verification fails, send error 401
+            return res.status(401).json({
+                message: "Invalid token",
+                success: false
+            });
+        }
+
+        // 5. If valid, attach the user's ID (from the token) to the request
+        req.id = decode.userId; // Now controller functions can access req.id
+
+        // 6. Call next() to allow the request to proceed to the next function (the controller)
+        next();
+
+    } catch (error) {
+        // Handle any unexpected errors during the process
+        console.log(error);
+        // Optionally, send a generic error response back
+        // res.status(500).json({ message: "Server Error" });
+    }
+};
+
+export default isAuthenticated; // Make the guard function available for use
+```
+
+**Code Explanation:**
+
+*   `import jwt from "jsonwebtoken";`: Imports the library needed to work with JWTs.
+*   `const isAuthenticated = async (req, res, next) => { ... };`: Defines the middleware function.
+    *   `req`: Represents the incoming request (contains info like headers, cookies, body, etc.).
+    *   `res`: Represents the response we will send back.
+    *   `next`: A crucial function! If called, it tells Express to pass the request to the *next* middleware or the final route handler in the sequence. If `next()` is *not* called (because we sent a response like `res.status(401).json(...)`), the request processing stops for this route.
+*   `const token = req.cookies.token;`: Tries to get the value of the `token` cookie from the request.
+*   `if (!token) { ... }`: Checks if the `token` was found. If not, it sends a 401 Unauthorized response and returns, stopping execution.
+*   `const decode = await jwt.verify(token, process.env.SECRET_KEY);`: Uses the JWT library to verify the token. It takes the token and a secret key (stored securely on the server in `process.env.SECRET_KEY`) to ensure the token is valid and untampered. The result (`decode`) contains the original payload we put in the token during login (like the user's ID).
+*   `if (!decode) { ... }`: Checks if the verification failed. If so, it sends a 401 Invalid Token response and returns.
+*   `req.id = decode.userId;`: If the token is valid, it extracts the `userId` from the decoded token payload and attaches it to the `req` object. This is super useful because now, any subsequent function (like `postJob`) can easily access `req.id` to know *which* user is making the request.
+*   `next();`: If all checks pass, `next()` is called, allowing the request to move on to the controller function defined in the route.
+*   `try...catch`: Basic error handling for unexpected issues.
+
+### Summary
+
+Backend Authentication Middleware, like our `isAuthenticated` function, is a vital security component. It acts as a gatekeeper for your sensitive backend routes, ensuring that only authenticated (logged-in) users with valid tokens can access them. By placing it before your controller functions in route definitions, you add a crucial layer of security with minimal code repetition.
+
+Now that we understand how to protect our routes, the next step is to understand how we represent and store data like users, jobs, and applications in our database.
+
+Let's move on to explore how we define the structure of our data using Mongoose.
+
+[Database Models (Mongoose)](02_database_models__mongoose__.md)
+f
